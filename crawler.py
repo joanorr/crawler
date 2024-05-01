@@ -1,7 +1,21 @@
+"""A simple web crawler to scrape links from a website.
+
+Example command line usage:
+
+  python3 crawler.py --root_url=http://www.joanorr.com
+
+Flags:
+
+  --num_workers: Number of worker tasks to run.
+    (an integer, default: '5')
+  --root_url: The site root url, e.g. http://www.joanorr.com/index.html
+"""
+
 from absl import app, flags
 import aiohttp
 import asyncio
 from bs4 import BeautifulSoup
+from typing import List, Set
 from urllib.parse import urldefrag, urljoin, urlparse
 
 MONITOR_SLEEP_MS = 250
@@ -16,7 +30,7 @@ flags.DEFINE_integer('num_workers', DEFAULT_NUM_WORKERS,
 flags.mark_flag_as_required('root_url')
 
 
-async def set_up_tasks(root_url, num_workers):
+async def set_up_tasks(root_url: str, num_workers: int) -> None:
     enqueued = set()
     queue = asyncio.Queue()
     queue.put_nowait(root_url)
@@ -31,46 +45,33 @@ async def set_up_tasks(root_url, num_workers):
         await asyncio.gather(*all_tasks)
 
 
-async def monitor(workers):
-    while True:
-        # Note, monitor must yield first in order to give the workers a chance
-        # to get their first url off the queue.
-        await asyncio.sleep(MONITOR_SLEEP_MS / 1000)
-
-        if all([worker.state is Worker.STATE_AWAITINMG_QUEUE
-                for worker in workers]):
-            break
-
-    for worker in workers:
-        worker.stop()
-
-
 class Worker(object):
     STATE_UNSPECIFIED = 0
     STATE_AWAITING_PAGE_GET = 1
     STATE_AWAITINMG_QUEUE = 2
 
-    def __init__(self, queue, enqueued, session):
+    def __init__(self, queue: asyncio.Queue, enqueued: Set[str],
+                 session: aiohttp.ClientSession) -> None:
         self.__state = self.STATE_UNSPECIFIED
         self.__queue = queue
         self.__enqueued = enqueued
         self.__session = session
 
     @property
-    def state(self):
+    def state(self) -> int:
         return self.__state
 
     @property
-    def task(self):
+    def task(self) -> asyncio.Task:
         return self.__task
 
-    def start(self):
+    def start(self) -> None:
         self.__task = asyncio.create_task(self.run())
 
-    def stop(self):
+    def stop(self) -> None:
         self.__task.cancel()
 
-    async def run(self):
+    async def run(self) -> None:
         while True:
             self.__state = self.STATE_AWAITINMG_QUEUE
             url = await self.__queue.get()
@@ -86,7 +87,7 @@ class Worker(object):
             self.__queue.task_done()
 
 
-async def get_page_links(session, url):
+async def get_page_links(session: aiohttp.ClientSession, url: str) -> Set[str]:
     async with session.get(url) as response:
         if response.headers['content-type'] != 'text/html':
             return set()
@@ -95,7 +96,7 @@ async def get_page_links(session, url):
         return extract_links_from_page(url, html)
 
 
-def extract_links_from_page(page_url, html):
+def extract_links_from_page(page_url: str, html: str) -> Set[str]:
     site_name = urlparse(page_url).netloc
     page_soup = BeautifulSoup(html, 'html.parser')
     href_list = [a['href']
@@ -110,7 +111,8 @@ def extract_links_from_page(page_url, html):
     return links_set
 
 
-def resolve_link_url(page_url, page_soup, link_url):
+def resolve_link_url(page_url: str, page_soup: BeautifulSoup,
+                     link_url: str) -> str:
     base_tag = page_soup.find("base")
     base_url = base_tag["href"] if base_tag else page_url
     resolved_link_url = urljoin(base_url, link_url)
@@ -118,7 +120,21 @@ def resolve_link_url(page_url, page_soup, link_url):
     return defragged_link_url
 
 
-def main(unused_argv):
+async def monitor(workers: List[Worker]) -> None:
+    while True:
+        # Note, monitor must yield first in order to give the workers a chance
+        # to get their first url off the queue.
+        await asyncio.sleep(MONITOR_SLEEP_MS / 1000)
+
+        if all([worker.state is Worker.STATE_AWAITINMG_QUEUE
+                for worker in workers]):
+            break
+
+    for worker in workers:
+        worker.stop()
+
+
+def main(unused_argv: List[str]):
     try:
         asyncio.run(set_up_tasks(FLAGS.root_url, FLAGS.num_workers))
     except asyncio.CancelledError:
