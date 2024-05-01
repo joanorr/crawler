@@ -104,7 +104,7 @@ def extract_links_from_page(page_url, html):
     for link_url in href_list:
         parsed_url = urlparse(link_url)
         if (parsed_url.scheme in ['', 'http', 'https'] and
-            parsed_url.netloc in ['', site_name]):
+                parsed_url.netloc in ['', site_name]):
             links_set.add(resolve_link_url(page_url, page_soup, link_url))
     print(page_url, links_set)
     return links_set
@@ -119,11 +119,11 @@ def resolve_link_url(page_url, page_soup, link_url):
 
 
 def main(unused_argv):
-  try:
-      asyncio.run(set_up_tasks(FLAGS.root_url, FLAGS.num_workers))
-  except asyncio.CancelledError:
-      print('Done')
+    try:
+        asyncio.run(set_up_tasks(FLAGS.root_url, FLAGS.num_workers))
+    except asyncio.CancelledError:
+        print('Done')
 
 
 if __name__ == '__main__':
-  app.run(main)
+    app.run(main)
