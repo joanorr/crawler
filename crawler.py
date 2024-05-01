@@ -47,7 +47,7 @@ async def set_up_tasks(root_url: str, num_workers: int) -> None:
         await asyncio.gather(*all_tasks)
 
 
-class Worker(object):
+class Worker:
     """A worker which extracts link URLs from the pages on the queue."""
     STATE_UNSPECIFIED = 0
     STATE_AWAITING_PAGE_GET = 1
@@ -116,8 +116,8 @@ def extract_links_from_page(page_url: str, html: str) -> Set[str]:
 
 def resolve_link_url(page_url: str, page_soup: BeautifulSoup,
                      link_url: str) -> str:
-    base_tag = page_soup.find("base")
-    base_url = base_tag["href"] if base_tag else page_url
+    base_tag = page_soup.find('base')
+    base_url = base_tag['href'] if base_tag else page_url
     resolved_link_url = urljoin(base_url, link_url)
     defragged_link_url = urldefrag(resolved_link_url).url
     return defragged_link_url
