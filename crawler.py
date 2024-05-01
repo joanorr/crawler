@@ -31,8 +31,10 @@ flags.mark_flag_as_required('root_url')
 
 
 async def set_up_tasks(root_url: str, num_workers: int) -> None:
-    enqueued = set()
+    # An async queue to hold the page links for processing by worker tasks.
     queue = asyncio.Queue()
+    # A set to dedup page links.
+    enqueued = set()
     queue.put_nowait(root_url)
     enqueued.add(root_url)
 
@@ -46,6 +48,7 @@ async def set_up_tasks(root_url: str, num_workers: int) -> None:
 
 
 class Worker(object):
+    """A worker which extracts link URLs from the pages on the queue."""
     STATE_UNSPECIFIED = 0
     STATE_AWAITING_PAGE_GET = 1
     STATE_AWAITINMG_QUEUE = 2
@@ -121,6 +124,7 @@ def resolve_link_url(page_url: str, page_soup: BeautifulSoup,
 
 
 async def monitor(workers: List[Worker]) -> None:
+    """A monitor task which stops the crawl when no more links are available."""
     while True:
         # Note, monitor must yield first in order to give the workers a chance
         # to get their first url off the queue.
