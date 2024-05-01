@@ -2,6 +2,7 @@
 
 from bs4 import BeautifulSoup
 import crawler
+import pytest
 
 
 class TestResolveLinkUrl:
@@ -48,3 +49,64 @@ class TestResolveLinkUrl:
 
         assert (crawler.resolve_link_url(page_url, page_soup, link_url) ==
                 'http://www.joanorr.com/foo/bar.html')
+
+
+class TestExtractLinksFromPage:
+    """Test suite for the extract_links_from_page function."""
+
+    PAGE_URL = 'https://www.joanorr.com/foo/bar.html'
+
+    def test_includes_links_to_current_site(self):
+        html = """
+          <a href="baz.html">Link 1</a>
+          <a href="/breeze.html">Link 2</a>
+          <a href="http://www.joanorr.com/blouse.html">Link 2</a>
+        """
+        expected_result = set([
+            'http://www.joanorr.com/blouse.html',
+            'https://www.joanorr.com/foo/baz.html',
+            'https://www.joanorr.com/breeze.html',
+        ])
+
+        actual_result = crawler.extract_links_from_page(self.PAGE_URL, html)
+
+        assert actual_result == expected_result
+
+    def test_does_not_inlcude_links_to_other_sites(self):
+        html = """
+          <a href="baz.html">Link 1</a>
+          <a href="https://www.example.com/blue.html">Link 2</a>
+        """
+        expected_result = set([
+            'https://www.joanorr.com/foo/baz.html',
+        ])
+
+        actual_result = crawler.extract_links_from_page(self.PAGE_URL, html)
+
+        assert actual_result == expected_result
+
+    def test_does_not_inlcude_links_which_are_not_http_or_https(self):
+        html = """
+          <a href="baz.html">Link 1</a>
+          <a href="mailto:someone@www.joanorr.com">Link 2</a>
+        """
+        expected_result = set([
+            'https://www.joanorr.com/foo/baz.html',
+        ])
+
+        actual_result = crawler.extract_links_from_page(self.PAGE_URL, html)
+
+        assert actual_result == expected_result
+
+    def test_ignores_anchors_without_href_attributes(self):
+        html = """
+          <a href="baz.html">Link 1</a>
+          <a name="target">Link 2</a>
+        """
+        expected_result = set([
+            'https://www.joanorr.com/foo/baz.html',
+        ])
+
+        actual_result = crawler.extract_links_from_page(self.PAGE_URL, html)
+
+        assert actual_result == expected_result
