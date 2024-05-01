@@ -15,7 +15,7 @@ from absl import app, flags
 import aiohttp
 import asyncio
 from bs4 import BeautifulSoup
-from typing import List, Set
+from typing import Callable, List, Set
 from urllib.parse import urldefrag, urljoin, urlparse
 
 MONITOR_SLEEP_MS = 250
@@ -39,7 +39,7 @@ async def set_up_tasks(root_url: str, num_workers: int) -> None:
     enqueued.add(root_url)
 
     async with aiohttp.ClientSession() as session:
-        workers = [Worker(queue, enqueued, session)
+        workers = [Worker(queue, enqueued, session, print_page_and_links)
                    for _ in range(num_workers)]
         for worker in workers:
             worker.start()
@@ -54,11 +54,14 @@ class Worker:
     STATE_AWAITINMG_QUEUE = 2
 
     def __init__(self, queue: asyncio.Queue, enqueued: Set[str],
-                 session: aiohttp.ClientSession) -> None:
+                 session: aiohttp.ClientSession,
+                 output_page_and_links_function: Callable[[str, Set[str]], str]
+                 ) -> None:
         self.__state = self.STATE_UNSPECIFIED
         self.__queue = queue
         self.__enqueued = enqueued
         self.__session = session
+        self.__output_page_and_links = output_page_and_links_function
 
     @property
     def state(self) -> int:
@@ -80,13 +83,14 @@ class Worker:
             url = await self.__queue.get()
 
             self.__state = self.STATE_AWAITING_PAGE_GET
-            result = await get_page_links(self.__session, url)
+            links_set = await get_page_links(self.__session, url)
+            self.__output_page_and_links(url, links_set)
 
             self.__state = self.STATE_UNSPECIFIED
-            for i in result:
-                if i not in self.__enqueued:
-                    self.__queue.put_nowait(i)
-                    self.__enqueued.add(i)
+            for link in links_set:
+                if link not in self.__enqueued:
+                    self.__queue.put_nowait(link)
+                    self.__enqueued.add(link)
             self.__queue.task_done()
 
 
@@ -96,7 +100,8 @@ async def get_page_links(session: aiohttp.ClientSession, url: str) -> Set[str]:
             return set()
 
         html = await response.text()
-        return extract_links_from_page(url, html)
+        links_set = extract_links_from_page(url, html)
+        return links_set
 
 
 def extract_links_from_page(page_url: str, html: str) -> Set[str]:
@@ -110,7 +115,6 @@ def extract_links_from_page(page_url: str, html: str) -> Set[str]:
         if (parsed_url.scheme in ['', 'http', 'https'] and
                 parsed_url.netloc in ['', site_name]):
             links_set.add(resolve_link_url(page_url, page_soup, link_url))
-    print(page_url, links_set)
     return links_set
 
 
@@ -121,6 +125,17 @@ def resolve_link_url(page_url: str, page_soup: BeautifulSoup,
     resolved_link_url = urljoin(base_url, link_url)
     defragged_link_url = urldefrag(resolved_link_url).url
     return defragged_link_url
+
+
+def print_page_and_links(page_url: str, links_set: Set[str]) -> None:
+    if links_set:
+        print(f'Links found on {page_url}')
+        for link_url in links_set:
+            print(f'  {link_url}')
+        print()
+    else:
+        print(f'No links found on {page_url}')
+        print()
 
 
 async def monitor(workers: List[Worker]) -> None:
