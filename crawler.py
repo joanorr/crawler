@@ -39,7 +39,8 @@ async def set_up_tasks(root_url: str, num_workers: int) -> None:
     enqueued.add(root_url)
 
     async with aiohttp.ClientSession() as session:
-        workers = [Worker(queue, enqueued, session, print_page_and_links)
+        workers = [Worker(queue, enqueued, session, print_page_and_links,
+                          get_page_links)
                    for _ in range(num_workers)]
         for worker in workers:
             worker.start()
@@ -55,13 +56,16 @@ class Worker:
 
     def __init__(self, queue: asyncio.Queue, enqueued: Set[str],
                  session: aiohttp.ClientSession,
-                 output_page_and_links_function: Callable[[str, Set[str]], str]
+                 output_page_and_links_function: Callable[[str, Set[str]], str],
+                 get_page_links_function: Callable[[aiohttp.ClientSession, str],
+                                                   Set[str]],
                  ) -> None:
         self.__state = self.STATE_UNSPECIFIED
         self.__queue = queue
         self.__enqueued = enqueued
         self.__session = session
         self.__output_page_and_links = output_page_and_links_function
+        self.__get_page_links_function = get_page_links_function
 
     @property
     def state(self) -> int:
@@ -83,7 +87,8 @@ class Worker:
             url = await self.__queue.get()
 
             self.__state = self.STATE_AWAITING_PAGE_GET
-            links_set = await get_page_links(self.__session, url)
+            links_set = await self.__get_page_links_function(
+                self.__session, url)
             self.__output_page_and_links(url, links_set)
 
             self.__state = self.STATE_UNSPECIFIED
