@@ -96,7 +96,7 @@ class Worker:
 
 async def get_page_links(session: aiohttp.ClientSession, url: str) -> Set[str]:
     async with session.get(url) as response:
-        if response.headers['content-type'] != 'text/html':
+        if not response.headers['content-type'].startswith('text/html'):
             return set()
 
         html = await response.text()
