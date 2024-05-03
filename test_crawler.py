@@ -1,8 +1,11 @@
 """Tests for the web crawler."""
 
+import aiohttp
+import asyncio
 from bs4 import BeautifulSoup
 import crawler
 import pytest
+from unittest.mock import patch, AsyncMock, MagicMock, Mock
 
 
 class TestResolveLinkUrl:
@@ -110,3 +113,150 @@ class TestExtractLinksFromPage:
         actual_result = crawler.extract_links_from_page(self.PAGE_URL, html)
 
         assert actual_result == expected_result
+
+
+@pytest.fixture
+async def mock_asyncio_gather():
+    return 'foo'
+
+
+@pytest.mark.asyncio
+@patch('asyncio.gather', new_callable=AsyncMock)
+@patch('crawler.monitor')
+@patch('crawler.Worker')
+async def test_worker(MockWorker, mock_monitor, mock_asyncio_gather):
+    root_url = 'http://www.example.com/'
+    num_workers = 3
+
+    await crawler.set_up_tasks(root_url, num_workers,
+                               crawler.print_page_and_links)
+
+    # The right number of Workers have been created
+    assert MockWorker.call_count == num_workers
+
+    # The monitor has been started and passed the workers
+    assert mock_monitor.call_count == 1
+    mock_monitor_args = mock_monitor.call_args.args
+    assert len(mock_monitor_args) == 1
+    assert len(mock_monitor_args[0]) == num_workers
+    assert "name='Worker()'" in repr(mock_monitor_args[0][0])
+    assert "name='Worker()'" in repr(mock_monitor_args[0][1])
+    assert "name='Worker()'" in repr(mock_monitor_args[0][2])
+
+    # The worker tasks have been gathered
+    assert mock_asyncio_gather.call_count == 1
+    mock_asyncio_gather_args = mock_asyncio_gather.call_args.args
+    assert len(mock_asyncio_gather_args) == 4
+    assert "name='Worker().task'" in repr(mock_asyncio_gather_args[0])
+    assert "name='Worker().task'" in repr(mock_asyncio_gather_args[1])
+    assert "name='Worker().task'" in repr(mock_asyncio_gather_args[2])
+
+
+@patch.object(crawler.Worker, 'run')
+@patch('asyncio.create_task')
+@patch('aiohttp.ClientSession')
+@patch('asyncio.Queue')
+def test_worker_starts_task(MockQueue, MockClientSession, mock_create_task,
+                            mock_crawler_worker_run):
+    queue = MockQueue()
+    enqueued = set()
+    session = MockClientSession()
+    worker = crawler.Worker(queue, enqueued, session,
+                            crawler.print_page_and_links)
+
+    mock_create_task.assert_not_called()
+    mock_crawler_worker_run.assert_not_called()
+    worker.start()
+
+    mock_create_task.assert_called_once()
+    mock_crawler_worker_run.assert_called_once()
+
+
+@patch.object(crawler.Worker, 'run')
+@patch('asyncio.create_task')
+@patch('aiohttp.ClientSession')
+@patch('asyncio.Queue')
+def test_worker_stops_task(MockQueue, MockClientSession, mock_create_task,
+                           mock_crawler_worker_run):
+    queue = MockQueue()
+    enqueued = set()
+    session = MockClientSession()
+    worker = crawler.Worker(queue, enqueued, session,
+                            crawler.print_page_and_links)
+    worker.start()
+
+    mock_create_task().cancel.assert_not_called()
+    worker.stop()
+
+    mock_create_task().cancel.assert_called_once()
+
+
+@pytest.mark.asyncio
+@patch('crawler.get_page_links')
+@patch('aiohttp.ClientSession')
+@patch('asyncio.Queue')
+async def test_worker_processes_queue(MockQueue, MockClientSession,
+                                      mock_get_page_links):
+    session = MockClientSession()
+    queue = MockQueue()
+    queue.get = AsyncMock(return_value='index.html')
+    enqueued = set(['index.html'])
+    mock_get_page_links.return_value = set(['foo.html', 'bar.html'])
+
+    worker = crawler.Worker(queue, enqueued, session,
+                            crawler.print_page_and_links)
+
+    await worker.process_queue_item()
+
+    assert enqueued == set(['index.html', 'foo.html', 'bar.html'])
+    assert queue.put_nowait.call_count == 2
+    assert queue.put_nowait.call_args_list[0].args[0] == 'bar.html'
+    assert queue.put_nowait.call_args_list[1].args[0] == 'foo.html'
+
+
+@pytest.mark.asyncio
+@patch('crawler.get_page_links')
+@patch('aiohttp.ClientSession')
+@patch('asyncio.Queue')
+async def test_worker_processes_queue_and_dedups(MockQueue, MockClientSession,
+                                                 mock_get_page_links):
+    session = MockClientSession()
+    queue = MockQueue()
+    queue.get = AsyncMock(return_value='index.html')
+    enqueued = set(['index.html'])
+    mock_get_page_links.return_value = set(['foo.html', 'bar.html', 'foo.html'])
+
+    worker = crawler.Worker(queue, enqueued, session,
+                            crawler.print_page_and_links)
+
+    await worker.process_queue_item()
+
+    # foo.html appears twice but is only added once
+    assert enqueued == set(['index.html', 'foo.html', 'bar.html'])
+    assert queue.put_nowait.call_count == 2
+    assert queue.put_nowait.call_args_list[0].args[0] == 'bar.html'
+    assert queue.put_nowait.call_args_list[1].args[0] == 'foo.html'
+
+
+@pytest.mark.asyncio
+@patch('crawler.get_page_links')
+@patch('aiohttp.ClientSession')
+@patch('asyncio.Queue')
+async def test_worker_processes_queue_does_not_revist(
+        MockQueue, MockClientSession, mock_get_page_links):
+    session = MockClientSession()
+    queue = MockQueue()
+    queue.get = AsyncMock(return_value='index.html')
+    enqueued = set(['index.html'])
+    mock_get_page_links.return_value = set([
+        'index.html', 'foo.html', 'bar.html'])
+
+    worker = crawler.Worker(queue, enqueued, session,
+                            crawler.print_page_and_links)
+
+    await worker.process_queue_item()
+
+    assert enqueued == set(['index.html', 'foo.html', 'bar.html'])
+    assert queue.put_nowait.call_count == 2
+    assert queue.put_nowait.call_args_list[0].args[0] == 'bar.html'
+    assert queue.put_nowait.call_args_list[1].args[0] == 'foo.html'

@@ -30,7 +30,9 @@ flags.DEFINE_integer('num_workers', DEFAULT_NUM_WORKERS,
 flags.mark_flag_as_required('root_url')
 
 
-async def set_up_tasks(root_url: str, num_workers: int) -> None:
+async def set_up_tasks(
+        root_url: str, num_workers: int,
+        output_page_and_links_function: Callable[[str, Set[str]], str]) -> None:
     # An async queue to hold the page links for processing by worker tasks.
     queue = asyncio.Queue()
     # A set to dedup page links.
@@ -39,8 +41,8 @@ async def set_up_tasks(root_url: str, num_workers: int) -> None:
     enqueued.add(root_url)
 
     async with aiohttp.ClientSession() as session:
-        workers = [Worker(queue, enqueued, session, print_page_and_links,
-                          get_page_links)
+        workers = [Worker(queue, enqueued, session,
+                          output_page_and_links_function)
                    for _ in range(num_workers)]
         for worker in workers:
             worker.start()
@@ -56,16 +58,13 @@ class Worker:
 
     def __init__(self, queue: asyncio.Queue, enqueued: Set[str],
                  session: aiohttp.ClientSession,
-                 output_page_and_links_function: Callable[[str, Set[str]], str],
-                 get_page_links_function: Callable[[aiohttp.ClientSession, str],
-                                                   Set[str]],
+                 output_page_and_links_function: Callable[[str, Set[str]], str]
                  ) -> None:
         self.__state = self.STATE_UNSPECIFIED
         self.__queue = queue
         self.__enqueued = enqueued
         self.__session = session
         self.__output_page_and_links = output_page_and_links_function
-        self.__get_page_links_function = get_page_links_function
 
     @property
     def state(self) -> int:
@@ -83,20 +82,23 @@ class Worker:
 
     async def run(self) -> None:
         while True:
-            self.__state = self.STATE_AWAITINMG_QUEUE
-            url = await self.__queue.get()
+            await self.process_queue_item()
 
-            self.__state = self.STATE_AWAITING_PAGE_GET
-            links_set = await self.__get_page_links_function(
-                self.__session, url)
-            self.__output_page_and_links(url, links_set)
+    async def process_queue_item(self) -> None:
+        self.__state = self.STATE_AWAITINMG_QUEUE
+        url = await self.__queue.get()
 
-            self.__state = self.STATE_UNSPECIFIED
-            for link in links_set:
-                if link not in self.__enqueued:
-                    self.__queue.put_nowait(link)
-                    self.__enqueued.add(link)
-            self.__queue.task_done()
+        self.__state = self.STATE_AWAITING_PAGE_GET
+        links_set = await get_page_links(
+            self.__session, url)
+        self.__output_page_and_links(url, links_set)
+
+        self.__state = self.STATE_UNSPECIFIED
+        for link in sorted(links_set):
+            if link not in self.__enqueued:
+                self.__queue.put_nowait(link)
+                self.__enqueued.add(link)
+        self.__queue.task_done()
 
 
 async def get_page_links(session: aiohttp.ClientSession, url: str) -> Set[str]:
@@ -160,7 +162,8 @@ async def monitor(workers: List[Worker]) -> None:
 
 def main(unused_argv: List[str]):
     try:
-        asyncio.run(set_up_tasks(FLAGS.root_url, FLAGS.num_workers))
+        asyncio.run(set_up_tasks(FLAGS.root_url, FLAGS.num_workers,
+                                 print_page_and_links))
     except asyncio.CancelledError:
         print('Done')
 
